@@ -1,0 +1,17 @@
+services:
+
+  room_energy-etl:
+    build: .
+
+    container_name: room_energy_etl
+
+    volumes:
+      - .:/app
+
+    tty: true
+
+    stdin_open: true
+
+    command: tail -f /dev/null
+
+    restart: unless-stopped
