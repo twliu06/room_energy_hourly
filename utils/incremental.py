@@ -1,13 +1,22 @@
+import os
 import pandas as pd
-from datetime import datetime
+from utils.time_utils import now_taipei
 from sqlalchemy import text
 from psycopg2.extras import execute_batch
+from utils.logger import get_logger
 
 from utils.db_sql import get_mssql_conn
 from utils.db_raw import get_conn as get_pg_raw_conn
 from utils.db_stg import get_conn as get_pg_stg_conn
 from config.transform import transform_raw_to_stg
 
+BASE_DIR = os.path.dirname(__file__)
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+
+print_log = get_logger(
+    log_dir=LOG_DIR,
+    log_prefix="room_energy_hourly"
+)
 
 def get_postgres_max_val(table_name, incremental_key, room_id=None, db_type="stg"):
 
@@ -46,7 +55,7 @@ def get_postgres_max_val(table_name, incremental_key, room_id=None, db_type="stg
                 return (row[0], row[1]) if row else None
 
     except Exception as e:
-        print(f"⚠️ 無法取得水位線 (可能表尚未建立): {e}")
+        print_log(f"⚠️ 無法取得水位線 (可能表尚未建立): {e}")
         return None
 
 
@@ -75,7 +84,7 @@ def run_incremental_etl(table_key, cfg, mode="stg_from_raw"):
         raise ValueError(f"❌ {table_key} 未設定 incremental_key")
 
     # 2. 取得目前目標表的最大時間
-    print(f"🔎 檢查 {target_table} 的水位線...")
+    print_log(f"🔎 檢查 {target_table} 的水位線...")
 
     max_val = get_postgres_max_val(
         target_table,
@@ -94,7 +103,7 @@ def run_incremental_etl(table_key, cfg, mode="stg_from_raw"):
 
         if not max_val:
 
-            print(f"🚀 目標表目前為空，開始全量初始化...")
+            print_log(f"🚀 目標表目前為空，開始全量初始化...")
 
             query += f"""
             ORDER BY
@@ -106,7 +115,7 @@ def run_incremental_etl(table_key, cfg, mode="stg_from_raw"):
 
             last_date, last_hour = max_val
 
-            print(
+            print_log(
                 f"📈 偵測到上次同步至: "
                 f"{last_date} {last_hour}:00，執行增量抓取..."
             )
@@ -141,7 +150,7 @@ def run_incremental_etl(table_key, cfg, mode="stg_from_raw"):
 
     # 4. 執行同步
     with src_conn_func() as src_conn:
-        print(f"📡 執行 SQL 查詢來源表: {query}")
+        print_log(f"📡 執行 SQL 查詢來源表: {query}")
         reader = pd.read_sql(query, src_conn, chunksize=500000)
         
         total_count = 0
@@ -156,16 +165,14 @@ def run_incremental_etl(table_key, cfg, mode="stg_from_raw"):
             # =========================
             if mode == "stg_from_raw":
                 df = transform_raw_to_stg(df, cfg)
-                print(f"🔧 欄位轉換: {len(chunk)} → {len(df)}")
+                print_log(f"🔧 欄位轉換: {len(chunk)} → {len(df)}")
 
             # 補充審核欄位
-            now = datetime.now()
+            now = now_taipei()
             df["created_at"] = now
             df["updated_at"] = now
 
             records = df.to_dict("records")
-            # print("RAW cols:", df.columns.tolist())
-            # print("METRIC keys:", list(cfg["metric_mapping"].keys()))
 
             # 寫入目標
             with target_conn_func() as pg_conn:
@@ -182,13 +189,9 @@ def run_incremental_etl(table_key, cfg, mode="stg_from_raw"):
 
                     execute_batch(cur, sql, records)
 
-                    # print("SOURCE TABLE CHECK:")
-                    # print(df.head(3))
-                    # print(df.columns.tolist())
-
                     total_count += len(df)
-                    print(f"➕ [{db_type.upper()}] 寫入第 {i+1} 批次完成，累計 {total_count} 筆")
+                    print_log(f"➕ [{db_type.upper()}] 寫入第 {i+1} 批次完成，累計 {total_count} 筆")
 
                 pg_conn.commit()
 
-    print(f"🎉 {table_key} 同步程序結束，共計處理 {total_count} 筆資料。")
+    print_log(f"🎉 {table_key} 同步程序結束，共計處理 {total_count} 筆資料。")

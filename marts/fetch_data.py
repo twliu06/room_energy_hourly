@@ -1,6 +1,16 @@
+import os
 import pandas as pd
+from utils.logger import get_logger
 import warnings
 warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy")
+
+BASE_DIR = os.path.dirname(__file__)
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+
+print_log = get_logger(
+    log_dir=LOG_DIR,
+    log_prefix="room_energy_hourly"
+)
 
 
 def fetch_view_data(conn, view_name, chunk_size=50000):
@@ -38,9 +48,9 @@ def fetch_multiple_views(conn, view_configs, chunk_size=50000):
     """
 
     for view_name, room_id in view_configs:
-        print(f"🚀 開始抓取 {view_name}")
+        print_log(f"🚀 開始抓取 {view_name}")
 
         for chunk in fetch_view_data(conn, view_name, chunk_size):
             yield view_name, room_id, chunk
 
-        print(f"✅ 完成 {view_name}")
+        print_log(f"✅ 完成 {view_name}")
